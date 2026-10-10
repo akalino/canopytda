@@ -10,7 +10,8 @@ import gudhi as gd
 
 
 __all__ = ["SimplicialComplex", "boundary", "boundary_columns",
-           "ordered_simplices", "simplex_tree_from_point_cloud",
+           "_normalize_simplex", "ordered_simplices",
+           "simplex_tree_from_point_cloud",
            "simplex_tree_from_simplices"]
 
 
