@@ -6,6 +6,7 @@ import math
 from itertools import combinations
 from numbers import Integral
 
+# pylint: disable=import-error
 import gudhi as gd
 
 
@@ -51,6 +52,8 @@ class SimplicialComplex:
     :type _simplices: iterable of iterable of int
     :raises ValueError: If no simplex is supplied or a simplex is invalid.
     """
+    # pylint: disable=no-member
+
     __slots__ = ("_simplices", "_simplex_set")
 
     def __init__(self, _simplices):
@@ -69,7 +72,7 @@ class SimplicialComplex:
         object.__setattr__(
             self, "_simplices",
             tuple(sorted(_closed_simplices,
-                         key=lambda _simplex: (len(_simplex), _simplex))),
+                         key=lambda _simplex: (len(_simplex), _simplex)))
         )
 
     def __setattr__(self, _name, _value):
@@ -114,7 +117,7 @@ class SimplicialComplex:
         """
         String representation of simplices.
         """
-        return "SimplicialComplex(r!)".format(self.facets)
+        return "SimplicialComplex{}".format(self.facets)
 
     @property
     def simplices(self):

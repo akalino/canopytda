@@ -11,15 +11,17 @@ from itertools import combinations
 from numbers import Integral
 from types import MappingProxyType
 
-import gudhi as gd
+import gudhi as gd #pylint: disable=import-error
 
 from .complex import SimplicialComplex
 from .complex import _normalize_simplex
-from .complex import ordered_simplices
 from .complex import simplex_tree_from_point_cloud
 
 
-__all__ = ['Filtration']
+__all__ = ["Filtration", "alpha_filtration", "available_filtrations",
+           "build_filtration", "custom_filtration", "delaunay_cech_filtration",
+           "explicit_filtration", "filtration_values",
+           "lower_star_filtration", "rips_filtration"]
 
 
 def _finite_float(_value, _name):
@@ -112,6 +114,7 @@ class Filtration:
     :type _values: mapping
     :raises ValueError: If values do not cover K or decrease along a face.
     """
+    # pylint: disable=no-member
 
     __slots__ = ("_complex", "_values")
 
@@ -246,3 +249,274 @@ def _normalized_vertex_values(_vertices, _vertex_values):
             _parts.append("unknown {}".format(_extra))
         raise ValueError("Vertex-value mapping has " + " and ".join(_parts))
     return _values
+
+
+def _validate_points(_points):
+    """
+    Reject an empty point cloud before calling GUDHI.
+
+    :param _points: Point cloud with one point per row.
+    :type _points: array-like
+    :raises TypeError: If the point cloud has no length.
+    :raises ValueError: If the point cloud is empty.
+    """
+    try:
+        _number_of_points = len(_points)
+    except TypeError as _error:
+        raise TypeError("Point cloud must be a sized collection") from _error
+    if _number_of_points == 0:
+        raise ValueError("Point cloud must contain at least one point")
+
+
+def _prune_dimension(_simplex_tree, _max_dimension):
+    """
+    Optionally remove simplices above a max dimension.
+
+    :param _simplex_tree: Filtered simplicial complex to be modified.
+    :type _simplex_tree: gudhi.SimplexTree
+    :param _max_dimension: Largest dimension to keep,
+                           or None to keep all dimensions.
+    :type _max_dimension: int or None
+    :return: The modified input simplex tree.
+    :rtype: gudhi.SimplexTree
+    :raises ValueError: If the dimension is invalid.
+    """
+    if _max_dimension is None:
+        return _simplex_tree
+    _dimension_is_integer = isinstance(_max_dimension, Integral)
+    if isinstance(_max_dimension, bool) or not _dimension_is_integer:
+        raise ValueError("Maximum dimension must be a nonnegative integer")
+    if _max_dimension < 0:
+        raise ValueError("Maximum dimension must be a nonnegative integer")
+    _simplex_tree.prune_above_dimension(int(_max_dimension))
+    return _simplex_tree
+
+
+def _nonnegative_threshold(_value, _name):
+    """
+    Return a nonnegative threshold, allowing positive infinity.
+
+    :param _value: Threshold to validate.
+    :type _value: real
+    :param _name: Name used in an error message.
+    :type _name: str
+    :return: Converted threshold.
+    :rtype: float
+    :raises TypeError: If the threshold cannot be converted to a float.
+    :raises ValueError: If the threshold is negative or NaN.
+    """
+    try:
+        _threshold = float(_value)
+    except (TypeError, ValueError) as _error:
+        raise TypeError("{} must be a real number".format(_name)) from _error
+    if math.isnan(_threshold) or _threshold < 0.0:
+        raise ValueError("{} must be nonnegative".format(_name))
+    return _threshold
+
+
+def alpha_filtration(_points, _max_alpha_square=math.inf,
+                     _max_dimension=None, _precision="safe",
+                     _output_squared_values=True):
+    """
+    Construct an Alpha filtration from a Euclidean point cloud.
+
+    The construction threshold is always a squared radius.  Output values are
+    squared radii by default and radii when _output_squared_values is
+    false.
+
+    :param _points: Euclidean point cloud with one point per row.
+    :type _points: array-like of shape (n_points, ambient_dimension)
+    :param _max_alpha_square: Largest squared alpha radius to include.
+    :type _max_alpha_square: float
+    :param _max_dimension: Optional largest dimension to retain.
+    :type _max_dimension: int or None
+    :param _precision: GUDHI precision mode: fast, safe or exact.
+    :type _precision: str
+    :param _output_squared_values: Whether output values remain squared.
+    :type _output_squared_values: bool
+    :return: Alpha filtration.
+    :rtype: gudhi.SimplexTree
+    """
+    _validate_points(_points)
+    _threshold = _nonnegative_threshold(_max_alpha_square,
+                                        "Maximum alpha square")
+    _alpha_complex = gd.AlphaComplex(points=_points, precision=_precision)
+    _simplex_tree = _alpha_complex.create_simplex_tree(
+        max_alpha_square=_threshold,
+        output_squared_values=_output_squared_values)
+    return _prune_dimension(_simplex_tree, _max_dimension)
+
+
+def available_filtrations():
+    """
+    Return the canonical filtration choices accepted by the dispatcher.
+
+    :return: Available filtration names.
+    :rtype: tuple of str
+    """
+    return tuple(FILTRATION_BUILDERS)
+
+
+def build_filtration(_choice, _data, **_parameters):
+    """
+    Build a filtration selected by name.
+
+    For explicit and lower_star, _data is a fixed complex or simplex tree.
+    For rips, alpha and delaunay_cech, it is a point cloud.
+    Remaining keyword arguments are passed to the selected constructor.
+
+    :param _choice: Filtration name or supported alias.
+    :type _choice: str
+    :param _data: Fixed complex, simplex tree or point cloud for the builder.
+    :type _data: object
+    :param _parameters: Arguments forwarded to the chosen builder.
+    :type _parameters: dict
+    :return: Selected filtration stored in a simplex tree.
+    :rtype: gudhi.SimplexTree
+    :raises ValueError: If the choice is not supported.
+    """
+    if not isinstance(_choice, str):
+        raise TypeError("Filtration choice must be a string")
+    _name = _choice.strip().lower().replace("-", "_")
+    _name = FILTRATION_ALIASES.get(_name, _name)
+    if _name not in FILTRATION_BUILDERS:
+        _choices = ", ".join(available_filtrations())
+        raise ValueError("Unknown filtration '{}'; "
+                         "choose from {}".format(_choice, _choices))
+    return FILTRATION_BUILDERS[_name](_data, **_parameters)
+
+
+def custom_filtration(_complex, _function):
+    """
+    Build one filtration from a user-supplied simplex-value function.
+
+    :param _complex: Fixed labeled simplicial complex.
+    :type _complex: SimplicialComplex
+    :param _function: Callable receiving a sorted simplex tuple.
+    :type _function: callable
+    :return: Validated filtration on the fixed complex.
+    :rtype: Filtration
+    :raises TypeError: If the complex or function has the wrong type.
+    :raises ValueError: If values are nonfinite or violate face monotonicity.
+    """
+    if not isinstance(_complex, SimplicialComplex):
+        raise TypeError("Expected a SimplicialComplex")
+    if not callable(_function):
+        raise TypeError("Expected a simplex-value function")
+
+    _values = {
+        _simplex: _function(_simplex)
+        for _simplex in _complex.simplices
+    }
+    return Filtration(_complex, _values)
+
+
+def delaunay_cech_filtration(_points, _max_radius_square=math.inf,
+                             _max_dimension=None,
+                             _precision="safe",
+                             _output_squared_values=True):
+    """
+    Construct a Delaunay--Cech filtration from a point cloud.
+
+    The Delaunay restriction has the persistence of the full Cech filtration
+    while usually using fewer simplices.  The construction threshold is
+    always a squared radius.
+
+    :param _points: Euclidean point cloud with one point per row.
+    :type _points: array-like of shape (n_points, ambient_dimension)
+    :param _max_radius_square: Largest squared ball radius to include.
+    :type _max_radius_square: float
+    :param _max_dimension: Optional largest dimension to retain.
+    :type _max_dimension: int or None
+    :param _precision: GUDHI precision mode: fast, safe or exact.
+    :type _precision: str
+    :param _output_squared_values: Whether output values remain squared.
+    :type _output_squared_values: bool
+    :return: Delaunay--Cech filtration.
+    :rtype: gudhi.SimplexTree
+    """
+    _validate_points(_points)
+    _threshold = _nonnegative_threshold(_max_radius_square,
+                                        "Maximum radius square")
+    _cech_complex = gd.DelaunayCechComplex(points=_points,
+                                           precision=_precision)
+    _simplex_tree = _cech_complex.create_simplex_tree(
+        max_alpha_square=_threshold,
+        output_squared_values=_output_squared_values)
+    return _prune_dimension(_simplex_tree, _max_dimension)
+
+
+def explicit_filtration(_simplex_tree, _values):
+    """
+    Assign a paper-style filtration to a fixed simplicial complex.
+
+    Every simplex must have one finite real value and every face value must be
+    no larger than its coface value. A new filtered simplex tree is returned;
+    the input complex or simplex tree is not modified.
+
+    :param _simplex_tree: Fixed finite simplicial complex.
+    :type _simplex_tree: SimplicialComplex or gudhi.SimplexTree
+    :param _values: Filtration values keyed by simplex tuples.
+    :type _values: mapping
+    :return: Filtered copy of the input complex.
+    :rtype: gudhi.SimplexTree
+    :raises ValueError: If values are missing, extraneous or not monotone.
+    """
+    _filtration = Filtration(_simplex_tree, _values)
+    if isinstance(_simplex_tree, SimplicialComplex):
+        return _filtration.to_simplex_tree()
+    _filtered_tree = _simplex_tree.copy()
+    for _simplex in _filtration.complex.simplices:
+        _filtered_tree.assign_filtration(_simplex, _filtration.value(_simplex))
+    return _filtered_tree
+
+
+def lower_star_filtration(_simplex_tree,
+                          _vertex_values):
+    """
+    Construct the lower-star filtration induced by vertex values.
+
+    The value of a simplex is the maximum value of one of its vertices.
+    A new filtered simplex tree is returned; the input is not modified.
+
+    :param _simplex_tree: Fixed finite simplicial complex.
+    :type _simplex_tree: SimplicialComplex or gudhi.SimplexTree
+    :param _vertex_values: Finite values keyed by integer vertex identifiers.
+    :type _vertex_values: mapping
+    :return: Lower-star filtered copy of the input complex.
+    :rtype: gudhi.SimplexTree
+    :raises ValueError: If a vertex value is missing or extraneous.
+    """
+    _filtration = Filtration.lower_star(_simplex_tree, _vertex_values)
+    if isinstance(_simplex_tree, SimplicialComplex):
+        return _filtration.to_simplex_tree()
+    _filtered_tree = _simplex_tree.copy()
+    for _simplex in _filtration.complex.simplices:
+        _filtered_tree.assign_filtration(_simplex, _filtration.value(_simplex))
+    return _filtered_tree
+
+
+def rips_filtration(_points, _max_edge_length, _max_dimension=2):
+    """
+    Construct a Vietoris--Rips filtration from a point cloud.
+
+    :param _points: Point cloud with one point per row.
+    :type _points: array-like of shape (n_points, ambient_dimension)
+    :param _max_edge_length: Largest edge length to include.
+    :type _max_edge_length: float
+    :param _max_dimension: Largest simplex dimension to construct.
+    :type _max_dimension: int
+    :return: Vietoris--Rips filtration.
+    :rtype: gudhi.SimplexTree
+    """
+    return simplex_tree_from_point_cloud(_points, _max_edge_length,
+                                         _max_dimension)
+
+
+FILTRATION_BUILDERS = {"explicit": explicit_filtration,
+                       "lower_star": lower_star_filtration,
+                       "rips": rips_filtration, "alpha": alpha_filtration,
+                       "delaunay_cech": delaunay_cech_filtration}
+
+FILTRATION_ALIASES = {"vr": "rips", "vietoris_rips": "rips",
+                      "cech": "delaunay_cech"}
