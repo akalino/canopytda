@@ -14,36 +14,18 @@ from types import MappingProxyType
 import gudhi as gd #pylint: disable=import-error
 
 from .complex import SimplicialComplex
-from .complex import _normalize_simplex
 from .complex import simplex_tree_from_point_cloud
+from .utils import _finite_float
+from .utils import _nonnegative_float
+from .utils import _nonnegative_integer
+from .utils import _normalize_simplex
+from .utils import _validate_points
 
 
 __all__ = ["Filtration", "alpha_filtration", "available_filtrations",
            "build_filtration", "custom_filtration", "delaunay_cech_filtration",
            "explicit_filtration", "filtration_values",
            "lower_star_filtration", "rips_filtration"]
-
-
-def _finite_float(_value, _name):
-    """
-    Return a finite floating-point value.
-
-    :param _value: Value to convert.
-    :type _value: real
-    :param _name: Name used in an error message.
-    :type _name: str
-    :return: Converted finite value.
-    :rtype: float
-    :raises TypeError: If the value cannot be converted to a float.
-    :raises ValueError: If the value is not finite.
-    """
-    try:
-        _number = float(_value)
-    except (TypeError, ValueError) as _error:
-        raise TypeError("{} must be a real number".format(_name)) from _error
-    if not math.isfinite(_number):
-        raise ValueError("{} must be finite".format(_name))
-    return _number
 
 
 def _normalized_simplex_values(_values):
@@ -66,7 +48,8 @@ def _normalized_simplex_values(_values):
         if _canonical_simplex in _normalized:
             raise ValueError("Filtration mapping repeats a simplex")
         _name = "Filtration value for {}".format(_canonical_simplex)
-        _normalized[_canonical_simplex] = _finite_float(_value, _name)
+        _normalized[_canonical_simplex] = _finite_float(
+            _value, _name, _error_type=TypeError)
     return _normalized
 
 
@@ -238,7 +221,8 @@ def _normalized_vertex_values(_vertices, _vertex_values):
             raise TypeError("Vertex-value keys must be integers")
         _vertex_id = int(_vertex)
         _name = "Value for vertex {}".format(_vertex_id)
-        _values[_vertex_id] = _finite_float(_value, _name)
+        _values[_vertex_id] = _finite_float(
+            _value, _name, _error_type=TypeError)
     _missing = sorted(set(_vertices) - set(_values))
     _extra = sorted(set(_values) - set(_vertices))
     if _missing or _extra:
@@ -249,23 +233,6 @@ def _normalized_vertex_values(_vertices, _vertex_values):
             _parts.append("unknown {}".format(_extra))
         raise ValueError("Vertex-value mapping has " + " and ".join(_parts))
     return _values
-
-
-def _validate_points(_points):
-    """
-    Reject an empty point cloud before calling GUDHI.
-
-    :param _points: Point cloud with one point per row.
-    :type _points: array-like
-    :raises TypeError: If the point cloud has no length.
-    :raises ValueError: If the point cloud is empty.
-    """
-    try:
-        _number_of_points = len(_points)
-    except TypeError as _error:
-        raise TypeError("Point cloud must be a sized collection") from _error
-    if _number_of_points == 0:
-        raise ValueError("Point cloud must contain at least one point")
 
 
 def _prune_dimension(_simplex_tree, _max_dimension):
@@ -283,35 +250,10 @@ def _prune_dimension(_simplex_tree, _max_dimension):
     """
     if _max_dimension is None:
         return _simplex_tree
-    _dimension_is_integer = isinstance(_max_dimension, Integral)
-    if isinstance(_max_dimension, bool) or not _dimension_is_integer:
-        raise ValueError("Maximum dimension must be a nonnegative integer")
-    if _max_dimension < 0:
-        raise ValueError("Maximum dimension must be a nonnegative integer")
-    _simplex_tree.prune_above_dimension(int(_max_dimension))
+    _dimension = _nonnegative_integer(_max_dimension, "Maximum dimension",
+                                      _error_type=ValueError)
+    _simplex_tree.prune_above_dimension(_dimension)
     return _simplex_tree
-
-
-def _nonnegative_threshold(_value, _name):
-    """
-    Return a nonnegative threshold, allowing positive infinity.
-
-    :param _value: Threshold to validate.
-    :type _value: real
-    :param _name: Name used in an error message.
-    :type _name: str
-    :return: Converted threshold.
-    :rtype: float
-    :raises TypeError: If the threshold cannot be converted to a float.
-    :raises ValueError: If the threshold is negative or NaN.
-    """
-    try:
-        _threshold = float(_value)
-    except (TypeError, ValueError) as _error:
-        raise TypeError("{} must be a real number".format(_name)) from _error
-    if math.isnan(_threshold) or _threshold < 0.0:
-        raise ValueError("{} must be nonnegative".format(_name))
-    return _threshold
 
 
 def alpha_filtration(_points, _max_alpha_square=math.inf,
@@ -338,8 +280,10 @@ def alpha_filtration(_points, _max_alpha_square=math.inf,
     :rtype: gudhi.SimplexTree
     """
     _validate_points(_points)
-    _threshold = _nonnegative_threshold(_max_alpha_square,
-                                        "Maximum alpha square")
+    _threshold = _nonnegative_float(_max_alpha_square,
+                                    "Maximum alpha square",
+                                    _allow_infinity=True,
+                                    _error_type=TypeError)
     _alpha_complex = gd.AlphaComplex(points=_points, precision=_precision)
     _simplex_tree = _alpha_complex.create_simplex_tree(
         max_alpha_square=_threshold,
@@ -436,8 +380,10 @@ def delaunay_cech_filtration(_points, _max_radius_square=math.inf,
     :rtype: gudhi.SimplexTree
     """
     _validate_points(_points)
-    _threshold = _nonnegative_threshold(_max_radius_square,
-                                        "Maximum radius square")
+    _threshold = _nonnegative_float(_max_radius_square,
+                                    "Maximum radius square",
+                                    _allow_infinity=True,
+                                    _error_type=TypeError)
     _cech_complex = gd.DelaunayCechComplex(points=_points,
                                            precision=_precision)
     _simplex_tree = _cech_complex.create_simplex_tree(

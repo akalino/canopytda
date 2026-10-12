@@ -6,12 +6,13 @@ smaller filtration value.
 Equal-valued simplices with no face relation remain incomparable.
 """
 from itertools import combinations
-from numbers import Integral
 
 import gudhi as gd  # pylint: disable=import-error
 
-from .complex import _normalize_simplex
 from .filtration import Filtration
+from .utils import _is_proper_face
+from .utils import _nonnegative_integer
+from .utils import _normalize_simplex
 
 
 __all__ = ["MinimalConsistentOrder", "canonical_refinement",
@@ -30,22 +31,6 @@ def _simplex_key(_simplex):
     :rtype: tuple
     """
     return (len(_simplex), _simplex)
-
-
-def _is_proper_face(_left, _right):
-    """
-    Check if the first simplex is a proper face of the second.
-
-    :param _left: Candidate face.
-    :type: tuple of int
-    :param _right: Candidate coface.
-    :type: tuple of int
-    :return: If the proper containment holds.
-    :rtype: bool
-    """
-    if len(_left) >= len(_right):
-        return False
-    return all(_vertex in _right for _vertex in _left)
 
 
 def _as_filtration(_filtration):
@@ -311,7 +296,7 @@ def is_consistent_refinement(_filtration, _order):
     return True
 
 
-def total_order_refinements(_filtration, _limit):
+def total_order_refinements(_filtration, _limit=None):
     """
     Lazy enumeration for total refinements of the minimal consistent order.
 
@@ -324,9 +309,8 @@ def total_order_refinements(_filtration, _limit):
     :raises ValueError: If the limit is not a nonnegative integer.
     """
     if _limit is not None:
-        _limit_is_integer = isinstance(_limit, Integral)
-        if isinstance(_limit, bool) or not _limit_is_integer or _limit < 0:
-            raise ValueError("Limit must be a nonnegative integer")
+        _limit = _nonnegative_integer(_limit, "Limit",
+                                      _error_type=ValueError)
 
     _simplices, _values = _filtration_data(_filtration)
     _groups_by_value = {}
