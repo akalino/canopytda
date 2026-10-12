@@ -1,42 +1,21 @@
 """
 Base classes for representing fixed simplicial complexes.
 """
-import math
-
 from itertools import combinations
-from numbers import Integral
 
 # pylint: disable=import-error
 import gudhi as gd
+from .utils import _is_proper_face
+from .utils import _nonnegative_float
+from .utils import _nonnegative_integer
+from .utils import _normalize_simplex
+from .utils import _validate_points
 
 
 __all__ = ["SimplicialComplex", "boundary", "boundary_columns",
-           "_normalize_simplex", "ordered_simplices",
+           "ordered_simplices",
            "simplex_tree_from_point_cloud",
            "simplex_tree_from_simplices"]
-
-
-def _normalize_simplex(_simplex):
-    """
-    Valid simplices as tuples of integers.
-
-    :param _simplex: Vertex identifiers for one nonempty simplex.
-    :type _simplex: iterable of int
-    :return: Canonical simplex.
-    :rtype: tuple
-    :raises ValueError: If the simplex is empty or repeats a vertex.
-    :raises TypeError: If a vertex identifier is not an integer.
-    """
-    _vertices = tuple(_simplex)
-    if not _vertices:
-        raise ValueError("Empty simplices implied, should not be supplied")
-    if any(not isinstance(_vertex, Integral) for _vertex in _vertices):
-        raise TypeError("Vertex identifiers must be integers")
-
-    _vertices = tuple(int(_vertices) for _vertices in _vertices)
-    if len(set(_vertices)) != len(_vertices):
-        raise ValueError("Vertex identifiers must be unique")
-    return tuple(sorted(_vertices))
 
 
 class SimplicialComplex:
@@ -46,7 +25,7 @@ class SimplicialComplex:
     Input simplices may be facets and all nonempty faces are included.
     The resulting object has no filtration values or Euclidean embedding.
     A filtered GUDHI simplex tree can be built from it independently at each
-    parameter knot.
+    sampled parameter.
 
     :param _simplices: Explicit simplices or facets with integer vertices.
     :type _simplices: iterable of iterable of int
@@ -117,7 +96,7 @@ class SimplicialComplex:
         """
         String representation of simplices.
         """
-        return "SimplicialComplex{}".format(self.facets)
+        return "SimplicialComplex({!r})".format(self.facets)
 
     @property
     def simplices(self):
@@ -141,8 +120,7 @@ class SimplicialComplex:
         return tuple(
             _simplex for _simplex in self._simplices
             if not any(
-                len(_coface) > len(_simplex) and set(_simplex).issubset(
-                    _coface)
+                _is_proper_face(_simplex, _coface)
                 for _coface in self._simplices
             )
         )
@@ -158,11 +136,11 @@ class SimplicialComplex:
         :raises ValueError: If the simplex is outside the complex.
         """
         _vertices = _normalize_simplex(_simplex)
-        if _vertices not in self._simplices:
+        if _vertices not in self._simplex_set:
             raise ValueError("Simplex not in the complex.")
         return tuple(
             _face for _face in self._simplices
-            if len(_face) < len(_vertices) and set(_face).issubset(_vertices)
+            if _is_proper_face(_face, _vertices)
         )
 
     def cofaces(self, _simplex):
@@ -180,8 +158,7 @@ class SimplicialComplex:
             raise ValueError("Simplex not in the complex.")
         return tuple(
             _coface for _coface in self._simplices
-            if len(_coface) > len(_vertices) and
-            set(_coface).issubset(_coface)
+            if _is_proper_face(_vertices, _coface)
         )
 
     @classmethod
@@ -201,8 +178,8 @@ class SimplicialComplex:
         """
         Return a new GUDHI simplex tree.
 
-        :param _simplex_tree: New tree whose simplex domain is the complex.
-        :return: gudhi.SimplexTree
+        :return: New tree whose simplex domain is the complex.
+        :rtype: gudhi.SimplexTree
         """
         _simplex_tree = gd.SimplexTree()
         for _simplex in self._simplices:
@@ -246,21 +223,14 @@ def simplex_tree_from_point_cloud(_points, _max_edge_length,
     :raises ValueError: If a construction bound is invalid.
     """
 
-    _dimension_is_integer = isinstance(_max_dimension, Integral)
-    if isinstance(_max_dimension, bool) or not _dimension_is_integer:
-        raise ValueError("Maximum dimension must be a nonnegative integer")
-    if _max_dimension < 0:
-        raise ValueError("Maximum dimension must be a nonnegative integer")
-
-    _edge_length = float(_max_edge_length)
-    if not math.isfinite(_edge_length) or _edge_length < 0.0:
-        raise ValueError("Maximum edge length must be finite and nonnegative")
-    if len(_points) == 0:
-        raise ValueError("Point cloud must contain at least one point")
+    _dimension = _nonnegative_integer(_max_dimension, "Maximum dimension",
+                                      _error_type=ValueError)
+    _edge_length = _nonnegative_float(_max_edge_length, "Maximum edge length")
+    _validate_points(_points)
 
     _rips_complex = gd.RipsComplex(points=_points,
                                    max_edge_length=_edge_length)
-    return _rips_complex.create_simplex_tree(max_dimension=int(_max_dimension))
+    return _rips_complex.create_simplex_tree(max_dimension=_dimension)
 
 
 def ordered_simplices(_simplex_tree):
